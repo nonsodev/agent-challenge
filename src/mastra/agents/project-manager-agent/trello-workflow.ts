@@ -1,430 +1,402 @@
+// Trello Task Enhancement Workflow
 import { Agent } from "@mastra/core/agent";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { model } from "../../config";
-import { trelloTool } from "./trello-tool";
-import { documentExportTool } from "./document-export-tool";
 
-const personalProjectAgent = new Agent({
-  name: "Personal Project Enhancement Agent",
+const agent = new Agent({
+  name: "Trello Task Enhancement Agent",
   model,
   instructions: `
-    You are a proactive personal project management expert specializing in enhancing and structuring Trello boards.
+    You are an expert project manager and task organizer. Your role is to transform messy, unstructured task descriptions into well-organized, actionable project boards.
 
-    Your role is to:
-    1. Analyze existing board structures and identify missing organization or clarity
-    2. Enhance card descriptions with clear action items and context
-    3. Create logical list flows (Backlog → In Progress → Review → Done)
-    4. Add appropriate labels for categorization and priority
-    5. Structure checklists for complex tasks
-    6. Suggest realistic due dates and dependencies
+    Given a project description or messy task list, you will:
+    1. Analyze the content and identify the main project theme
+    2. Break down complex tasks into manageable subtasks
+    3. Create logical groupings and categories
+    4. Generate comprehensive checklists for each task
+    5. Suggest realistic time constraints and priorities
+    6. Organize everything into a structured board format
 
-    For new projects from messy input:
-    - Extract clear project goals and break into phases
-    - Structure into logical lists and workflow stages
-    - Create actionable cards with clear outcomes
-    - Add appropriate labels and organization
-    - Suggest realistic timelines and milestones
+    Structure your response as a JSON object with the following format:
+    {
+      "boardName": "Clear, descriptive board name",
+      "lists": [
+        {
+          "name": "List Name (e.g., Planning, In Progress, Review, Done)",
+          "cards": [
+            {
+              "title": "Clear, actionable task title",
+              "description": "Detailed description of what needs to be done",
+              "labels": ["Research", "Design", "Development", "Testing", "Review"],
+              "dueInDays": 3,
+              "priority": "High/Medium/Low",
+              "checklist": [
+                "Specific actionable step 1",
+                "Specific actionable step 2",
+                "Specific actionable step 3"
+              ]
+            }
+          ]
+        }
+      ]
+    }
 
     Guidelines:
-    - Keep cards actionable and specific
-    - Use lists to represent workflow stages or project phases
-    - Add checklists for multi-step tasks
-    - Use labels for priority, category, or status
-    - Consider personal capacity and realistic timelines
-    - Focus on personal productivity and clarity
-    - Suggest automation opportunities where relevant
+    - Create 4-6 lists maximum (typical workflow: To Do, In Progress, Review, Done)
+    - Each card should have 3-8 checklist items
+    - Due dates should be realistic (1-30 days)
+    - Use clear, action-oriented language
+    - Group related tasks logically
+    - Include dependencies and prerequisites
+    - Add relevant labels (Research, Design, Development, Testing, Review, etc.)
+    - Ensure all tasks are specific and measurable
 
-    Always structure for personal workflow optimization and clear progress tracking.
+    CRITICAL: You must respond with ONLY valid JSON. Do not include any markdown formatting, code blocks, or additional text. Start your response with { and end with }. No explanatory text before or after the JSON.
   `,
-  tools: [trelloTool, documentExportTool],
 });
 
-const readAndEnhanceBoard = createStep({
-  id: "read-and-enhance-board",
-  description: "Reads source board (if provided) and enhances it, or creates from messy input",
-  inputSchema: z.object({
-    sourceWorkspaceName: z.string().optional().describe("Source workspace name"),
-    sourceBoardName: z.string().optional().describe("Source board name to read from"),
-    messyInput: z.string().optional().describe("Raw project description if no source board"),
-  }),
+// Input schema for the workflow
+const workflowInputSchema = z.object({
+  taskDescription: z.string().describe("The messy tasks or project description to enhance"),
+  sourceWorkspace: z.string().optional().describe("Existing workspace to read from (optional)"),
+  sourceBoard: z.string().optional().describe("Existing board to read from (optional)"),
+  targetWorkspace: z.string().describe("Target workspace to create the enhanced board in"),
+  targetBoard: z.string().describe("Name for the new enhanced board"),
+});
+
+// Enhanced task structure schema
+const enhancedTaskSchema = z.object({
+  boardName: z.string(),
+  lists: z.array(z.object({
+    name: z.string(),
+    cards: z.array(z.object({
+      title: z.string(),
+      description: z.string(),
+      labels: z.array(z.string()),
+      dueInDays: z.number(),
+      priority: z.string(),
+      checklist: z.array(z.string()),
+    })),
+  })),
+});
+
+// Trello API configuration
+const TRELLO_BASE_URL = "https://api.trello.com/1";
+
+// Helper function to get auth parameters
+function getAuthParams() {
+  const API_KEY = process.env.TRELLO_API_KEY;
+  const TOKEN = process.env.TRELLO_TOKEN;
+  if (!API_KEY || !TOKEN) {
+    throw new Error("TRELLO_API_KEY and TRELLO_TOKEN must be set in environment variables");
+  }
+  return { key: API_KEY, token: TOKEN };
+}
+
+// Helper function to make authenticated requests
+async function trelloRequest(endpoint: string, method: string = 'GET', params: any = {}) {
+  const auth = getAuthParams();
+  const url = new URL(`${TRELLO_BASE_URL}${endpoint}`);
+  
+  // Add auth and other params
+  Object.entries({ ...auth, ...params }).forEach(([key, value]) => {
+    if (value) url.searchParams.append(key, String(value));
+  });
+
+  const response = await fetch(url.toString(), { method });
+  if (!response.ok) {
+    throw new Error(`Trello API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+// Step 1: Read existing board (if specified)
+const readExistingBoard = createStep({
+  id: "read-existing-board",
+  description: "Reads existing Trello board data if source workspace and board are provided",
+  inputSchema: workflowInputSchema,
   outputSchema: z.object({
-    enhancedBoardData: z.object({
-      lists: z.array(z.object({
-        name: z.string(),
-        cards: z.array(z.object({
-          title: z.string(),
-          description: z.string(),
-          labels: z.array(z.string()),
-          dueDate: z.string().optional(),
-          checklist: z.array(z.string()),
-        })),
-      })),
-      labels: z.array(z.object({
-        name: z.string(),
-        color: z.string(),
-      })),
-    }),
-    recommendations: z.string(),
+    existingBoardData: z.string().optional(),
+    originalInput: workflowInputSchema,
   }),
-  execute: async (context) => {
-    // Debug logging
-    console.log("readAndEnhanceBoard context:", context);
-
-    // Handle both destructured and non-destructured contexts
-    const inputData = context?.inputData || context;
-
+  execute: async ({ inputData }) => {
     if (!inputData) {
       throw new Error("Input data not found");
     }
 
-    let prompt = "";
-    let boardData = null;
+    let existingBoardData = "";
 
-    // Read source board if provided
-    if (inputData.sourceWorkspaceName && inputData.sourceBoardName) {
+    if (inputData.sourceWorkspace && inputData.sourceBoard) {
       try {
-        // Corrected: Removed the 'context' argument from trelloTool.execute
-        const result = await trelloTool.execute({
-          action: "read",
-          workspaceName: inputData.sourceWorkspaceName,
-          boardName: inputData.sourceBoardName,
-        });
-
-        if (!result.success) {
-          throw new Error(`Failed to read board: ${result.error}`);
+        // Get workspace ID
+        const organizations = await trelloRequest("/members/me/organizations");
+        const workspace = organizations.find((org: any) => 
+          org.displayName.toLowerCase() === inputData.sourceWorkspace!.toLowerCase()
+        );
+        
+        if (!workspace) {
+          throw new Error(`Workspace '${inputData.sourceWorkspace}' not found`);
         }
 
-        boardData = result.data;
-        prompt = `Analyze this Trello board and enhance it:
+        // Get board
+        const boards = await trelloRequest(`/organizations/${workspace.id}/boards`);
+        const board = boards.find((b: any) => 
+          b.name.toLowerCase() === inputData.sourceBoard!.toLowerCase()
+        );
 
-          Board Data: ${JSON.stringify(boardData, null, 2)}
+        if (!board) {
+          throw new Error(`Board '${inputData.sourceBoard}' not found in workspace`);
+        }
 
-          Please:
-          1. Identify missing organization or unclear cards
-          2. Enhance card descriptions with clear action items
-          3. Suggest better list structures and workflow
-          4. Add appropriate labels and checklists
-          5. Recommend improvements to board organization
-          6. Suggest realistic due dates and priorities
+        // Get board structure
+        const lists = await trelloRequest(`/boards/${board.id}/lists`);
+        const labels = await trelloRequest(`/boards/${board.id}/labels`);
+        const labelMap = Object.fromEntries(labels.map((l: any) => [l.id, l.name]));
 
-          Return the enhanced board structure and your recommendations.`;
+        let boardStructure = `Board: ${board.name}\n\n`;
+
+        for (const list of lists) {
+          const cards = await trelloRequest(`/lists/${list.id}/cards`);
+          boardStructure += `List: ${list.name}\n`;
+          
+          for (const card of cards) {
+            boardStructure += `  - ${card.name}\n`;
+            if (card.desc) boardStructure += `    Description: ${card.desc}\n`;
+            if (card.idLabels.length > 0) {
+              const cardLabels = card.idLabels.map((id: string) => labelMap[id]).join(", ");
+              boardStructure += `    Labels: ${cardLabels}\n`;
+            }
+            if (card.due) boardStructure += `    Due: ${card.due}\n`;
+
+            // Get checklists
+            const checklists = await trelloRequest(`/cards/${card.id}/checklists`);
+            for (const checklist of checklists) {
+              boardStructure += `    Checklist: ${checklist.name}\n`;
+              for (const item of checklist.checkItems) {
+                const status = item.state === 'complete' ? '✓' : '○';
+                boardStructure += `      ${status} ${item.name}\n`;
+              }
+            }
+          }
+          boardStructure += "\n";
+        }
+
+        existingBoardData = boardStructure;
       } catch (error) {
-        console.error("Error reading board:", error);
-        // If board reading fails, fall back to treating as messy input
-        prompt = `Transform this board enhancement request into a well-structured Trello board:
-
-          Workspace: ${inputData.sourceWorkspaceName}
-          Board: ${inputData.sourceBoardName}
-          (Unable to read existing board, creating new structure)
-
-          Please create a comprehensive board structure with appropriate lists, cards, and labels.`;
+        console.warn(`Could not read existing board: ${error}`);
+        existingBoardData = "";
       }
-    } else if (inputData.messyInput) {
-      // Creating from messy input
-      prompt = `Transform this messy project description into a well-structured Trello board:
-
-        Input: ${inputData.messyInput}
-
-        Please:
-        1. Extract clear project goals and phases
-        2. Structure into logical lists and workflow stages
-        3. Create actionable cards with clear outcomes
-        4. Add appropriate labels and organization
-        5. Suggest realistic timelines and milestones
-        6. Structure checklists for complex tasks
-
-        Return the structured board and your recommendations.`;
-    } else {
-      throw new Error("Either source board details or messyInput must be provided");
     }
 
-    const response = await personalProjectAgent.stream([
+    return {
+      existingBoardData,
+      originalInput: inputData,
+    };
+  },
+});
+
+// Step 2: Enhance tasks using AI
+const enhanceTasks = createStep({
+  id: "enhance-tasks",
+  description: "Uses AI to enhance and structure the task description",
+  inputSchema: z.object({
+    existingBoardData: z.string().optional(),
+    originalInput: workflowInputSchema,
+  }),
+  outputSchema: z.object({
+    enhancedTasks: enhancedTaskSchema,
+    originalInput: workflowInputSchema,
+  }),
+  execute: async ({ inputData }) => {
+    if (!inputData) {
+      throw new Error("Input data not found");
+    }
+
+    let prompt = `Transform the following project description into a well-structured Trello board:
+
+Project Description:
+${inputData.originalInput.taskDescription}
+
+Target Board Name: ${inputData.originalInput.targetBoard}`;
+
+    if (inputData.existingBoardData) {
+      prompt += `\n\nExisting Board Data to Consider:
+${inputData.existingBoardData}`;
+    }
+
+    const response = await agent.stream([
       {
         role: "user",
         content: prompt,
       },
     ]);
 
-    let enhancementText = "";
+    let enhancedTasksText = "";
     for await (const chunk of response.textStream) {
-      enhancementText += chunk;
+      enhancedTasksText += chunk;
     }
 
-    // For now, return a structured example - you'll want to parse the AI response
-    const enhancedBoardData = {
-      lists: [
-        {
-          name: "Backlog",
-          cards: [
-            {
-              title: "Project Planning",
-              description: "Define project scope, goals, and success criteria",
-              labels: ["Priority: High", "Planning"],
-              checklist: [
-                "Define project objectives",
-                "Identify key stakeholders",
-                "Set success metrics",
-                "Create project timeline",
-              ],
-            },
-            {
-              title: "Research & Analysis",
-              description: "Gather requirements and conduct market research",
-              labels: ["Priority: Medium", "Research"],
-              checklist: [
-                "Conduct user interviews",
-                "Analyze competitors",
-                "Document requirements",
-              ],
-            },
-          ],
-        },
-        {
-          name: "In Progress",
-          cards: [],
-        },
-        {
-          name: "Review",
-          cards: [],
-        },
-        {
-          name: "Done",
-          cards: [],
-        },
-      ],
-      labels: [
-        { name: "Priority: High", color: "red" },
-        { name: "Priority: Medium", color: "yellow" },
-        { name: "Priority: Low", color: "green" },
-        { name: "Planning", color: "blue" },
-        { name: "Research", color: "purple" },
-        { name: "Development", color: "orange" },
-        { name: "Testing", color: "pink" },
-      ],
-    };
-
-    return {
-      enhancedBoardData,
-      recommendations: enhancementText,
-    };
-  },
-});
-
-const enhanceBoard = createStep({
-  id: "enhance-board",
-  description: "Analyzes and enhances the board structure",
-  inputSchema: z.object({
-    enhancedBoardData: z.object({
-      lists: z.array(z.object({
-        name: z.string(),
-        cards: z.array(z.object({
-          title: z.string(),
-          description: z.string(),
-          labels: z.array(z.string()),
-          dueDate: z.string().optional(),
-          checklist: z.array(z.string()),
-        })),
-      })),
-      labels: z.array(z.object({
-        name: z.string(),
-        color: z.string(),
-      })),
-    }),
-    recommendations: z.string(),
-  }),
-  outputSchema: z.object({
-    enhancedBoardData: z.object({
-      lists: z.array(z.object({
-        name: z.string(),
-        cards: z.array(z.object({
-          title: z.string(),
-          description: z.string(),
-          labels: z.array(z.string()),
-          dueDate: z.string().optional(),
-          checklist: z.array(z.string()),
-        })),
-      })),
-      labels: z.array(z.object({
-        name: z.string(),
-        color: z.string(),
-      })),
-    }),
-    recommendations: z.string(),
-  }),
-  execute: async (context) => {
-    // Debug logging
-    console.log("enhanceBoard context:", context);
-
-    // Handle both destructured and non-destructured contexts
-    const inputData = context?.inputData || context;
-
-    if (!inputData) {
-      throw new Error("Input data not found");
-    }
-
-    // Pass through the enhanced data - this step could be used for additional processing
-    return {
-      enhancedBoardData: inputData.enhancedBoardData,
-      recommendations: inputData.recommendations,
-    };
-  },
-});
-
-const writeEnhancedBoard = createStep({
-  id: "write-enhanced-board",
-  description: "Writes the enhanced board to the target Trello board",
-  inputSchema: z.object({
-    targetWorkspaceName: z.string().describe("Target workspace name"),
-    targetBoardName: z.string().describe("Target board name to write to"),
-    enhancedBoardData: z.object({
-      lists: z.array(z.object({
-        name: z.string(),
-        cards: z.array(z.object({
-          title: z.string(),
-          description: z.string(),
-          labels: z.array(z.string()),
-          dueDate: z.string().optional(),
-          checklist: z.array(z.string()),
-        })),
-      })),
-      labels: z.array(z.object({
-        name: z.string(),
-        color: z.string(),
-      })),
-    }),
-    exportFallback: z.boolean().default(false),
-  }),
-  outputSchema: z.object({
-    success: z.boolean(),
-    result: z.any(),
-    fallbackExport: z.string().optional(),
-  }),
-  execute: async (context) => {
-    // Debug logging
-    console.log("writeEnhancedBoard context:", context);
-
-    // Handle both destructured and non-destructured contexts
-    const inputData = context?.inputData || context;
-
-    if (!inputData) {
-      throw new Error("Input data not found");
-    }
-
+    let enhancedTasks;
     try {
-      // Corrected: Removed the 'context' argument from trelloTool.execute
-      const result = await trelloTool.execute({
-        action: "write",
-        workspaceName: inputData.targetWorkspaceName,
-        boardName: inputData.targetBoardName,
-        boardData: inputData.enhancedBoardData,
+      // Clean the response - remove markdown code blocks and trim whitespace
+      let cleanedResponse = enhancedTasksText.trim();
+      
+      // Remove markdown code blocks if present
+      if (cleanedResponse.startsWith('```json')) {
+        cleanedResponse = cleanedResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+      } else if (cleanedResponse.startsWith('```')) {
+        cleanedResponse = cleanedResponse.replace(/^```\s*/, '').replace(/\s*```$/, '');
+      }
+      
+      // Trim again after cleaning
+      cleanedResponse = cleanedResponse.trim();
+      
+      enhancedTasks = JSON.parse(cleanedResponse);
+      
+      // Validate the structure
+      if (!enhancedTasks.boardName || !enhancedTasks.lists || !Array.isArray(enhancedTasks.lists)) {
+        throw new Error("Invalid enhanced tasks structure");
+      }
+    } catch (error) {
+      throw new Error(`Failed to parse AI response as JSON: ${error}. Response was: ${enhancedTasksText.substring(0, 200)}...`);
+    }
+
+    return {
+      enhancedTasks,
+      originalInput: inputData.originalInput,
+    };
+  },
+});
+
+// Step 3: Create Trello board
+const createTrelloBoard = createStep({
+  id: "create-trello-board",
+  description: "Creates the enhanced Trello board with tasks, lists, and cards",
+  inputSchema: z.object({
+    enhancedTasks: enhancedTaskSchema,
+    originalInput: workflowInputSchema,
+  }),
+  outputSchema: z.object({
+    boardUrl: z.string(),
+    summary: z.string(),
+  }),
+  execute: async ({ inputData }) => {
+    if (!inputData) {
+      throw new Error("Input data not found");
+    }
+
+    const { enhancedTasks, originalInput } = inputData;
+
+    // Get member ID
+    const member = await trelloRequest("/members/me");
+    const memberId = member.id;
+
+    // Get or create workspace
+    let workspaceId;
+    const organizations = await trelloRequest("/members/me/organizations");
+    const existingWorkspace = organizations.find((org: any) => 
+      org.displayName.toLowerCase() === originalInput.targetWorkspace.toLowerCase()
+    );
+
+    if (existingWorkspace) {
+      workspaceId = existingWorkspace.id;
+    } else {
+      const newWorkspace = await trelloRequest("/organizations", "POST", {
+        displayName: originalInput.targetWorkspace,
+        name: originalInput.targetWorkspace.toLowerCase().replace(/\s+/g, "-"),
+      });
+      workspaceId = newWorkspace.id;
+    }
+
+    // Create board
+    const board = await trelloRequest("/boards", "POST", {
+      name: enhancedTasks.boardName || originalInput.targetBoard,
+      idOrganization: workspaceId,
+      defaultLists: false,
+    });
+
+    // Archive any default lists
+    const defaultLists = await trelloRequest(`/boards/${board.id}/lists`);
+    for (const list of defaultLists) {
+      await trelloRequest(`/lists/${list.id}/closed`, "PUT", { value: true });
+    }
+
+    // Create labels
+    const labelColors = ["blue", "green", "orange", "red", "purple", "yellow", "pink", "sky"];
+    const labelMap = new Map<string, string>();
+    const uniqueLabels = [...new Set(enhancedTasks.lists.flatMap(list => 
+      list.cards.flatMap(card => card.labels)
+    ))];
+
+    for (let i = 0; i < uniqueLabels.length; i++) {
+      const label = await trelloRequest("/labels", "POST", {
+        idBoard: board.id,
+        name: uniqueLabels[i],
+        color: labelColors[i % labelColors.length],
+      });
+      labelMap.set(uniqueLabels[i], label.id);
+    }
+
+    // Create lists and cards
+    let totalCards = 0;
+    for (const listData of enhancedTasks.lists) {
+      const list = await trelloRequest("/lists", "POST", {
+        idBoard: board.id,
+        name: listData.name,
       });
 
-      if (!result.success && inputData.exportFallback) {
-        // Fallback to markdown export
-        const tasks = inputData.enhancedBoardData.lists.flatMap((list) =>
-          list.cards.map((card) => ({
-            title: card.title,
-            description: card.description,
-            type: "Task",
-            priority:
-              card.labels.find((l) => l.includes("Priority"))?.split(": ")[1] ||
-              "Medium",
-            dueDate: card.dueDate,
-            dependencies: [],
-            effort: "TBD",
-            status: list.name,
-          }))
-        );
+      for (const cardData of listData.cards) {
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + cardData.dueInDays);
 
-        // Corrected: Removed the 'context' argument from documentExportTool.execute
-        const exportResult = await documentExportTool.execute({
-          projectData: {
-            name: `Enhanced Board - ${inputData.targetBoardName}`,
-            description: "Enhanced board structure",
-            tasks,
-          },
-          format: "detailed",
+        const card = await trelloRequest("/cards", "POST", {
+          idList: list.id,
+          name: cardData.title,
+          desc: `${cardData.description}\n\n**Priority:** ${cardData.priority}`,
+          due: dueDate.toISOString(),
+          idLabels: cardData.labels.map(label => labelMap.get(label)).filter(Boolean).join(","),
+          idMembers: memberId,
         });
 
-        return {
-          success: true,
-          result: exportResult.data,
-          fallbackExport: exportResult.data.markdown,
-        };
-      }
-
-      return {
-        success: result.success,
-        result: result.data,
-      };
-    } catch (error) {
-      console.error("Error writing board:", error);
-
-      // If writing fails, try the fallback export
-      if (inputData.exportFallback) {
-        try {
-          const tasks = inputData.enhancedBoardData.lists.flatMap((list) =>
-            list.cards.map((card) => ({
-              title: card.title,
-              description: card.description,
-              type: "Task",
-              priority:
-                card.labels.find((l) => l.includes("Priority"))?.split(": ")[1] ||
-                "Medium",
-              dueDate: card.dueDate,
-              dependencies: [],
-              effort: "TBD",
-              status: list.name,
-            }))
-          );
-
-          // Corrected: Removed the 'context' argument from documentExportTool.execute
-          const exportResult = await documentExportTool.execute({
-            projectData: {
-              name: `Enhanced Board - ${inputData.targetBoardName}`,
-              description: "Enhanced board structure",
-              tasks,
-            },
-            format: "detailed",
+        // Add checklist
+        if (cardData.checklist.length > 0) {
+          const checklist = await trelloRequest(`/cards/${card.id}/checklists`, "POST", {
+            name: "Tasks",
           });
 
-          return {
-            success: true,
-            result: exportResult.data,
-            fallbackExport: exportResult.data.markdown,
-          };
-        } catch (exportError) {
-          console.error("Export fallback also failed:", exportError);
-          throw new Error(`Failed to write enhanced board and export fallback failed: ${error}`);
+          for (const item of cardData.checklist) {
+            await trelloRequest(`/checklists/${checklist.id}/checkItems`, "POST", {
+              name: item,
+            });
+          }
         }
-      }
 
-      throw new Error(`Failed to write enhanced board: ${error}`);
+        totalCards++;
+      }
     }
+
+    const summary = `Successfully created board "${enhancedTasks.boardName}" with ${enhancedTasks.lists.length} lists and ${totalCards} cards in workspace "${originalInput.targetWorkspace}".`;
+
+    return {
+      boardUrl: board.url,
+      summary,
+    };
   },
 });
 
+// Main workflow
 const trelloWorkflow = createWorkflow({
   id: "trello-enhancement-workflow",
-  inputSchema: z.object({
-    sourceWorkspaceName: z.string().optional().describe("Source workspace name (optional)"),
-    sourceBoardName: z.string().optional().describe("Source board name to enhance (optional)"),
-    targetWorkspaceName: z.string().describe("Target workspace name"),
-    targetBoardName: z.string().describe("Target board name to write to"),
-    messyInput: z.string().optional().describe("Raw project description if no source board"),
-    exportFallback: z.boolean().default(false).describe("Export to markdown if Trello write fails"),
-  }),
+  inputSchema: workflowInputSchema,
   outputSchema: z.object({
-    success: z.boolean(),
-    result: z.any(),
-    recommendations: z.string(),
-    fallbackExport: z.string().optional(),
+    boardUrl: z.string(),
+    summary: z.string(),
   }),
 })
-  .then(readAndEnhanceBoard)
-  .then(enhanceBoard)
-  .then(writeEnhancedBoard);
+  .then(readExistingBoard)
+  .then(enhanceTasks)
+  .then(createTrelloBoard);
 
 trelloWorkflow.commit();
 
