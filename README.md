@@ -182,17 +182,34 @@ How to prepare:
 ---
 
 ## 📦 Submission & Links
+---
 
-**🌐 Deployment Page:** https://dashboard.nosana.com/jobs/Cvrmp58ucrPbtBbKxL3F19fHTLwPudzffPh7dW9TupHN
-**🐳 Docker Image:** `https://hub.docker.com/r/nonsodev/agent-challenge`
-**📹 Demo Video:** https://youtu.be/zpMDZG3YLwE
-**💻 GitHub:** [https://github.com/nonsodev/agent-challenge](https://github.com/nonsodev/agent-challenge)
-**🐤 Twitter/X:** [https://x.com/nonsodev](https://x.com/nonsodev)
-**GitHub:** https://github.com/nonsodev/agent-challenge  
-**Nosana Deployment:** https://3tkmkvsmjzuovf6hbms5kbxekybdfpx8txuzpgzyebjm.node.k8s.prd.nos.ci/agents/projectManagerAgent/chat/eb06371e-48cf-438a-bb0e-7abd311b96c6
-**Solana address** Cvrmp58ucrPbtBbKxL3F19fHTLwPudzffPh7dW9TupHN
-**Host address**	6UG9Er6fVjcCjJYcsNnX1syi2PZD5PDeVkjBuDcbHb6V
-**Deployer address** 8vR7motUTwKHC6Dsd1zv3cPjjQh6BwiHcJCXUzv6T13d
+**🌐 Deployment Page:**
+[https://dashboard.nosana.com/jobs/Cvrmp58ucrPbtBbKxL3F19fHTLwPudzffPh7dW9TupHN](https://dashboard.nosana.com/jobs/Cvrmp58ucrPbtBbKxL3F19fHTLwPudzffPh7dW9TupHN)
+
+**🐳 Docker Image:**
+[https://hub.docker.com/r/nonsodev/agent-challenge](https://hub.docker.com/r/nonsodev/agent-challenge)
+
+**📹 Demo Video:**
+[https://youtu.be/zpMDZG3YLwE](https://youtu.be/zpMDZG3YLwE)
+
+**💻 GitHub:**
+[https://github.com/nonsodev/agent-challenge](https://github.com/nonsodev/agent-challenge)
+
+**🐤 Twitter/X:**
+[https://x.com/nonsodev](https://x.com/nonsodev)
+
+**Nosana Deployment:**
+[https://3tkmkvsmjzuovf6hbms5kbxekybdfpx8txuzpgzyebjm.node.k8s.prd.nos.ci/agents/projectManagerAgent/chat/eb06371e-48cf-438a-bb0e-7abd311b96c6](https://3tkmkvsmjzuovf6hbms5kbxekybdfpx8txuzpgzyebjm.node.k8s.prd.nos.ci/agents/projectManagerAgent/chat/eb06371e-48cf-438a-bb0e-7abd311b96c6)
+
+**Solana Address:**
+Cvrmp58ucrPbtBbKxL3F19fHTLwPudzffPh7dW9TupHN
+
+**Host Address:**
+6UG9Er6fVjcCjJYcsNnX1syi2PZD5PDeVkjBuDcbHb6V
+
+**Deployer Address:**
+8vR7motUTwKHC6Dsd1zv3cPjjQh6BwiHcJCXUzv6T13d
 
 ---
 
