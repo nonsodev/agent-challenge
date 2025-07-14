@@ -1,16 +1,17 @@
 FROM ollama/ollama:0.7.0
 
-# Qwen2.5:1.5b - Docker
-ENV API_BASE_URL=http://127.0.0.1:11434/api
-ENV MODEL_NAME_AT_ENDPOINT=qwen2.5:1.5b
+# Set Ollama to bind to all interfaces
+ENV OLLAMA_HOST=0.0.0.0
 
-# Qwen2.5:32b = Docker
-# ENV API_BASE_URL=http://127.0.0.1:11434/api
-# ENV MODEL_NAME_AT_ENDPOINT=qwen2.5:32b
+
+# Disable PostHog telemetry to prevent network errors
+ENV POSTHOG_DISABLED=true
 
 # Install system dependencies and Node.js
 RUN apt-get update && apt-get install -y \
   curl \
+  lsof \
+  wait-for-it \
   && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
   && apt-get install -y nodejs \
   && rm -rf /var/lib/apt/lists/* \
@@ -19,8 +20,8 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy package files
-COPY .env.docker package.json pnpm-lock.yaml ./
+# Copy package files first for better caching
+COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies
 RUN pnpm install
@@ -28,11 +29,26 @@ RUN pnpm install
 # Copy the rest of the application
 COPY . .
 
-# Build the project
+# Build the project for production
 RUN pnpm run build
 
-# Override the default entrypoint
-ENTRYPOINT ["/bin/sh", "-c"]
+# Copy and make startup script executable
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
 
-# Start Ollama service and pull the model, then run the app
-CMD ["ollama serve & sleep 5 && ollama pull ${MODEL_NAME_AT_ENDPOINT} && node .mastra/output/index.mjs"]
+# Expose ports
+EXPOSE 8080
+
+# Environment variables
+
+ENV API_BASE_URL=http://0.0.0.0:11434/api/
+ENV MODEL_NAME_AT_ENDPOINT=qwen2.5:1.5b
+ENV PORT=8080
+ENV DATABASE_URL=file:./mastra.db
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+# Use exec form for better signal handling
+ENTRYPOINT ["/start.sh"]

@@ -1,18 +1,30 @@
 {
   "ops": [
     {
-      "id": "agents",
+      "id": "Project-manager-agent",
       "args": {
         "gpu": true,
-        "image": "docker.io/yourusername/agent-challenge:latest",
+        "image": "docker.io/nonsodev/agent-challenge:latest",
         "expose": [
           {
-            "port": 8080
+            "port": 8080,
+            "health_checks": [
+              {
+                "path": "/health",
+                "type": "http",
+                "method": "GET",
+                "continuous": true,
+                "expected_status": 200
+              }
+            ]
           }
         ],
-        "entrypoint": [
-          "/bin/sh"
-        ]
+        "entrypoint": ["/bin/sh"],
+        "cmd": ["/start.sh"],
+        "env": {
+          "API_BASE_URL": "http://0.0.0.0:11434/api",
+          "MODEL_NAME_AT_ENDPOINT": "qwen2.5:32b"
+        }
       },
       "type": "container/run"
     }
@@ -20,8 +32,9 @@
   "meta": {
     "trigger": "dashboard",
     "system_requirements": {
-      "required_vram": 4
-    }
+      "required_vram": 12
+    },
+    "description": "AI project partner that reads your messy boards, fixes the chaos, and creates winning roadmaps—proactively."
   },
   "type": "container",
   "version": "0.1"
